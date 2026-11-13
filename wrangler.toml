@@ -1,0 +1,3 @@
+name = "aniverse-stream"
+main = "stream-worker.js"
+compatibility_date = "2026-11-10"
