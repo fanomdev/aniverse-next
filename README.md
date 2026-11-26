@@ -1,5 +1,10 @@
 # AniVerse (Next.js)
 
+## About
+
+AniVerse is the front door to watching anime without accounts or ads. The catalog comes from AniList's GraphQL API and posters, seasons and details are resolved on the fly, so there is no database and no scrape cache to rot. Stream playback goes through a vendored Kuhi API, kept on the same page in a self-contained setup — one folder, no back office. A Next.js rebuild keeps the same UI and catalog, everything self-contained — and the web build is wrapped in Capacitor as com.aniverse.app for a native Android experience with the same flows, only without a browser chrome.
+
+
 The exact same AniVerse site as the vanilla-JS version, rebuilt as a real
 Next.js app. Same UI, same AniList catalog, same Kuhi-hosted playback —
 now **self-contained in this one folder**, including the stream host.
