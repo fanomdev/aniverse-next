@@ -1,3 +1,7 @@
 name = "aniverse-stream"
 main = "stream-worker.js"
 compatibility_date = "2026-11-10"
+
+[[kv_namespaces]]
+binding = "VIDEO_CACHE"
+id = "e7ee5295c5994177a4c89986bc39ecb3"

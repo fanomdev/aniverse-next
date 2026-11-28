@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react"
 import RequireAuth from "@/components/RequireAuth"
 import ErrorState from "@/components/ErrorState"
 import { API } from "@/lib/api"
-import { Watchlist, Continue } from "@/lib/storage"
+import { Watchlist, Continue, Watched } from "@/lib/storage"
 import { fmtRating, yearOf, genres, toast } from "@/lib/ui"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
@@ -23,12 +23,16 @@ function DetailInner() {
   const dp = searchParams?.get("dp") || ""
   const [subject, setSubject] = useState<any>(null)
   const [seasons, setSeasons] = useState<{ se: number; maxEp: number }[]>([])
+  const [episodeNames, setEpisodeNames] = useState<{ n: number; title: string; thumbnail: string }[]>([])
   const [stars, setStars] = useState<{ name: string; character: string }[]>([])
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<any>(null)
   const [activeSe, setActiveSe] = useState(1)
   const [onList, setOnList] = useState(() => (dp ? Watchlist.has(dp) : false))
   const cont = useMemo(() => (dp ? Continue.forTitle(dp)[0] : undefined), [dp])
+  const watched = useMemo(() => new Set(Watched.get(dp).filter((k) => k.split(":")[0] === String(activeSe)).map((k) => String(k).split(":")[1])), [dp, activeSe])
+  const epMap = useMemo(() => new Map(episodeNames.map((e) => [e.n, e])), [episodeNames])
 
   useEffect(() => {
     if (!dp) return
@@ -43,6 +47,7 @@ function DetailInner() {
         const se = (data?.resource?.seasons || []).filter((x: any) => x && (x.maxEp > 0 || x.se === 0))
         setSeasons(se)
         setStars(data?.stars || [])
+        setEpisodeNames(Array.isArray(data?.episodeList) ? data.episodeList : [])
         const contSe = cont?.se
         setActiveSe(contSe ?? se[0]?.se ?? (se.length === 1 && se[0].se === 0 ? 0 : 1))
       })
@@ -125,10 +130,32 @@ function DetailInner() {
               ))}
             </div>
           )}
-          <div className="ep-grid" id="epGrid">
-            {epGrid.map((ep) => (
-              <button key={ep} data-ep={ep} aria-label={`Episode ${ep}`} onClick={() => { window.location.href = `/watch?dp=${encodeURIComponent(dp)}&sid=${subject.subjectId}&se=${activeSe}&ep=${ep}` }}>{ep}</button>
-            ))}
+          <div className="ep-list" id="epGrid" aria-label="Episodes">
+            {epGrid.map((ep) => {
+              const meta = epMap.get(ep)
+              const name = meta?.title || `Episode ${ep}`
+              const seen = watched.has(String(ep))
+              return (
+                <button key={ep} className={`ep-row${seen ? " watched" : ""}`} data-ep={ep} aria-label={`Episode ${ep}: ${name}${seen ? " — watched" : ""}`} onClick={() => { window.location.href = `/watch?dp=${encodeURIComponent(dp)}&sid=${subject.subjectId}&se=${activeSe}&ep=${ep}` }}>
+                  <span className="ep-thumb-wrap">
+                    <img
+                      className="ep-thumb"
+                      loading="lazy"
+                      decoding="async"
+                      src={meta?.thumbnail || cover}
+                      alt={name}
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0" }}
+                    />
+                    {seen ? <span className="ep-check" aria-hidden>✓</span> : null}
+                  </span>
+                  <span className="ep-info">
+                    <span className="ep-num">Episode {ep}</span>
+                    <span className="ep-title">{name}</span>
+                  </span>
+                  <svg className="ep-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+                </button>
+              )
+            })}
           </div>
         </section>
       )}

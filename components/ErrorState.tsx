@@ -11,8 +11,8 @@ export default function ErrorState({ error }: { error: any }) {
       {isUnconfigured ? (
         <p>
           Start the app with a stream host:<br />
-          <code>$env:ANIME_SOURCES_BASE="http://localhost:9797"</code><br />
-          (PowerShell: <code>$env:ANIME_SOURCES_BASE="http://localhost:9797"; pnpm dev</code>)
+          <code>$env:ANIME_SOURCES_BASE=&quot;http://localhost:9797&quot;</code><br />
+          (PowerShell: <code>$env:ANIME_SOURCES_BASE=&quot;http://localhost:9797&quot;; pnpm dev</code>)
         </p>
       ) : null}
       {code === "rate_limited" && <p>AniList allows ~30 requests/minute — wait a moment and try again.</p>}

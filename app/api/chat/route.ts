@@ -1,9 +1,12 @@
-// app/api/chat — AniVerse anime assistant, proxied to Groq (free tier, llama-3.3-70b).
-// GROQ_API_KEY stays server-side; the browser only ever sees replies.
+// app/api/chat — AniVerse anime assistant, proxied to Google Gemini.
+// GEMINI_API_KEY stays server-side; the browser only ever sees replies.
 export const dynamic = "force-dynamic"
 
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-const MODEL = "openai/gpt-oss-120b"
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+// Gemini's named versions rotate availability (404/503); the "latest"
+// aliases stay current. Lite models are far less prone to 503 "high demand",
+// so try those first and keep heavier ones as fallback.
+const MODELS = ["gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-3.7-flash"]
 const MAX_MSG = 2000
 
 export async function POST(req: Request) {
@@ -19,13 +22,13 @@ export async function POST(req: Request) {
   const messages = body.messages
     .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && m?.content)
     .slice(-12)
-    .map((m: any) => ({ role: m.role, content: String(m.content).slice(0, MAX_MSG) }))
+    .map((m: any) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: String(m.content).slice(0, MAX_MSG) }] }))
   if (!messages.length) return Response.json({ error: "bad_request" }, { status: 400 })
 
-  const apiKey = process.env.GROQ_API_KEY
+  const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
     return Response.json(
-      { error: "chat_not_configured", message: "Chat isn't configured yet — set GROQ_API_KEY (Groq console, free tier)." },
+      { error: "chat_not_configured", message: "Chat isn't configured yet — set GEMINI_API_KEY (Google AI Studio)." },
       { status: 503 }
     )
   }
@@ -40,30 +43,37 @@ export async function POST(req: Request) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 25000)
   try {
-    const res = await fetch(GROQ_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [{ role: "system", content: system }, ...messages],
-        temperature: 0.7,
-        max_tokens: 500,
-      }),
-      signal: controller.signal,
-    })
-    if (res.status === 429) {
-      return Response.json({ error: "rate_limited", message: "Groq free tier is busy — try again in a moment." }, { status: 429 })
+    let lastStatus = 502
+    for (const model of MODELS) {
+      const res = await fetch(`${GEMINI_URL}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: messages,
+          generationConfig: { temperature: 0.7, maxOutputTokens: 500 },
+        }),
+        signal: controller.signal,
+      })
+      if (res.status === 429) {
+        return Response.json({ error: "rate_limited", message: "Gemini free tier is busy — try again in a moment." }, { status: 429, headers: { "Access-Control-Allow-Origin": "*" } })
+      }
+      if (!res.ok) { lastStatus = res.status; continue }
+      const j = await res.json()
+      const reply = j?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("").trim()
+      if (reply) return Response.json({ reply }, { headers: { "Access-Control-Allow-Origin": "*" } })
+      lastStatus = 502
     }
-    if (!res.ok) {
-      return Response.json({ error: "upstream", message: `Groq error (${res.status}).` }, { status: 502 })
-    }
-    const j = await res.json()
-    const reply = j?.choices?.[0]?.message?.content?.trim()
-    if (!reply) return Response.json({ error: "upstream", message: "Empty reply from Groq." }, { status: 502 })
-    return Response.json({ reply })
+    const lastIsDemand = lastStatus === 503
+    return Response.json({
+      error: "upstream",
+      message: lastIsDemand
+        ? "Gemini is busy right now (high demand) — try again in a moment."
+        : `Gemini error (${lastStatus}).`,
+    }, { status: lastIsDemand ? 503 : 502, headers: { "Access-Control-Allow-Origin": "*" } })
   } catch (e: any) {
-    if (e?.name === "AbortError") return Response.json({ error: "timeout", message: "Groq timed out — try again." }, { status: 504 })
-    return Response.json({ error: "network", message: "Can't reach Groq. Check your connection." }, { status: 502 })
+    if (e?.name === "AbortError") return Response.json({ error: "timeout", message: "Gemini timed out — try again." }, { status: 504 })
+    return Response.json({ error: "network", message: "Can't reach Gemini. Check your connection." }, { status: 502 })
   } finally {
     clearTimeout(timer)
   }

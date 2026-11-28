@@ -5,6 +5,11 @@ import AnimeCard from "@/components/AnimeCard"
 import { Auth } from "@/lib/auth"
 import { Watchlist, Continue, Likes } from "@/lib/storage"
 import { fmtRating, toast } from "@/lib/ui"
+import Link from "next/link"
+import { Downloader } from "@/lib/downloader"
+import { THEMES, getTheme, saveTheme, type ThemeId } from "@/lib/theme"
+import { Sync } from "@/lib/sync"
+import NameParticles from "@/components/NameParticles"
 
 function fmtClock(s: number) {
   s = Math.floor(s || 0)
@@ -27,18 +32,41 @@ function ProfileInner() {
   const wl = Watchlist.all()
   const cw = Continue.all()
   // recompute on tick (e.g. after clearing history)
-  useEffect(() => { /* watchlist/continue read from localStorage on every render */ }, [tick])
+  // re-render when a background pull lands so remote data appears immediately
+  useEffect(() => {
+    const onSync = () => setTick((x) => x + 1)
+    window.addEventListener("aniverse:sync", onSync)
+    return () => window.removeEventListener("aniverse:sync", onSync)
+  }, [])
 
+  const [particlesOpen, setParticlesOpen] = useState(false)
+  const [deletePass, setDeletePass] = useState("")
+  const [deleting, setDeleting] = useState(false)
+  const [syncState, setSyncState] = useState(Sync.status())
+  const refreshSync = () => setSyncState(Sync.status())
+  const doSync = async (force = false) => {
+    const r: any = await Sync.flush(force)
+    refreshSync()
+    toast(r.ok ? "Synced to your account" : r.reason === "conflict" ? `Sync conflict in ${(r.conflicts || []).join(", ")}` : "Offline — changes queued")
+  }
   const initial = (user?.username || "?").charAt(0).toUpperCase()
-  const memberSince = since ? `Member since ${new Date(since).toLocaleDateString(undefined, { year: "numeric", month: "long" })}` : "Demo account · local to this device"
+  const memberSince = since ? `Member since ${new Date(since).toLocaleDateString(undefined, { year: "numeric", month: "long" })}` : user?.guest ? "Guest session · saved on this device" : "Account"
 
   return (
     <>
       <div className="profile-head">
         <div className="profile-avatar">{initial}</div>
         <div>
-          <h1 id="profileName">{user?.username || "Guest"}</h1>
+          <h1 id="profileName">{user?.username || "Guest"}{user?.guest ? <span className="guest-tag">guest</span> : null}</h1>
           <p id="profileSince">{memberSince}</p>
+          {user?.id && <p className="uid-line">ID: {user.id.slice(0, 18)}…</p>}
+          <div className="sync-panel">
+            <span className={`sync-pill sync-${syncState.state}`}>{syncState.state === "synced" ? "☁ Synced" : syncState.state === "offline" ? "○ Offline" : syncState.state === "conflict" ? "⚠ Conflict" : "↻ Local"}</span>
+            <button className="btn btn-ghost" onClick={() => void doSync()} style={{ fontSize: 11, padding: "5px 10px" }}>Sync now</button>
+            {syncState.state === "conflict" && (
+              <button className="btn btn-ghost" onClick={() => void doSync(true)} style={{ fontSize: 11, padding: "5px 10px" }}>Use this device&apos;s data</button>
+            )}
+          </div>
           <div className="stat-row">
             <div className="stat"><b id="statWatchlist">{wl.length}</b><span>Watchlist</span></div>
             <div className="stat"><b id="statResume">{cw.length}</b><span>In Progress</span></div>
@@ -47,6 +75,24 @@ function ProfileInner() {
           </div>
         </div>
       </div>
+
+      <div className="row-title"><h2>Theme</h2></div>
+      <div className="theme-row" role="radiogroup" aria-label="App theme">
+        {THEMES.map((t) => (
+          <button
+            key={t.id}
+            className={`theme-chip${getTheme() === t.id ? " active" : ""}`}
+            role="radio"
+            aria-checked={getTheme() === t.id}
+            onClick={() => { saveTheme(t.id as ThemeId); setTick((x) => x + 1) }}
+          >
+            <span className={`theme-dot theme-dot-${t.id}`} />{t.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="row-title"><h2>Downloads</h2></div>
+      <Link className="btn btn-ghost" href="/downloads" style={{ margin: "0 2px 14px" }}>⬇ My Downloads{Downloader.isNative() ? "" : " (web)"}</Link>
 
       <div className="row-title"><h2>My List</h2></div>
       <div className="grid" id="watchlistGrid">
@@ -85,9 +131,26 @@ function ProfileInner() {
 
       <div className="row-title"><h2>Account</h2></div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", padding: "0 2px 20px" }}>
+        <button className="btn btn-ghost" onClick={() => setParticlesOpen(true)}>✦ {user?.username || "Your"} particle effects</button>
         <button className="btn btn-ghost" onClick={() => { localStorage.removeItem("aniverse_continue"); toast("Watch history cleared"); setTick((t) => t + 1) }}>Clear watch history</button>
         <button className="btn btn-ghost danger" onClick={() => { Auth.logout(); window.location.replace("/") }}>Log out</button>
       </div>
+      {!user?.guest && (
+        <div style={{ margin: "0 2px 28px", padding: 14, border: "1px solid rgba(255,90,80,.45)", borderRadius: 12 }}>
+          <b style={{ fontSize: 13 }}>Delete account</b>
+          <p style={{ color: "var(--muted)", fontSize: 12, margin: "5px 0 10px" }}>Permanently removes your account, saved list and progress from the server. This cannot be undone.</p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input type="password" placeholder="Confirm your password" value={deletePass} onChange={(e) => setDeletePass(e.target.value)} style={{ flex: "1 1 180px", height: 38, borderRadius: 10, border: "1px solid var(--line)", background: "var(--surface)", color: "inherit", padding: "0 10px" }} />
+            <button className="btn btn-ghost danger" disabled={deleting || !deletePass} onClick={async () => {
+              if (!window.confirm(`Permanently delete ${user?.username}? All synced data will be removed.`)) return
+              setDeleting(true)
+              try { await Auth.deleteAccount(deletePass); toast("Account deleted"); window.location.replace("/") }
+              catch (err: any) { toast(err?.message || "Could not delete the account"); setDeleting(false) }
+            }}>{deleting ? "Deleting…" : "Delete my account"}</button>
+          </div>
+        </div>
+      )}
+      {particlesOpen && <NameParticles name={user?.username || "You"} onClose={() => setParticlesOpen(false)} />}
     </>
   )
 }

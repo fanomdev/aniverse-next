@@ -6,20 +6,27 @@
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node tests/backend.mjs"
   },
   "dependencies": {
+    "@capacitor/core": "^7.6.10",
+    "@capacitor/filesystem": "^7.1.9",
+    "@yogesharc/thinking-orbs": "^0.1.2",
+    "glisse": "^0.6.0",
+    "gradflow": "^0.4.0",
+    "hls.js": "^1.5.13",
     "next": "14.2.24",
+    "nodemailer": "^10.6.1",
     "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "hls.js": "^1.5.13"
+    "react-dom": "18.2.0"
   },
   "devDependencies": {
-    "typescript": "5.2.2",
     "@types/node": "20.6.0",
     "@types/react": "18.2.21",
     "@types/react-dom": "18.2.7",
     "eslint": "8.49.0",
-    "eslint-config-next": "14.2.24"
+    "eslint-config-next": "14.2.24",
+    "typescript": "5.2.2"
   }
 }

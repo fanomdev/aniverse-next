@@ -1,0 +1,63 @@
+/* Glassy login + OTP — original implementation inspired by CodeXr UI Glassy OTP v15 */
+.glass-card{position:relative;width:min(460px,calc(100vw - 28px));border-radius:28px;padding:34px 30px 26px;text-align:center;animation:gCardIn 1s var(--g-spring) both;isolation:isolate}
+.glass-card::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;border:1px solid rgba(255,255,255,.32);background:linear-gradient(150deg,rgba(255,255,255,.16),rgba(255,255,255,.05));backdrop-filter:blur(32px) saturate(1.6);-webkit-backdrop-filter:blur(32px) saturate(1.6);box-shadow:0 40px 90px -40px rgba(0,0,0,.75),inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08);animation:gGlassIn .9s var(--g-ease) both;transition:box-shadow .7s var(--g-ease)}
+.glass-card::after{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;background:radial-gradient(360px circle at var(--mx,50%) var(--my,0%),rgba(255,255,255,.16),transparent 48%);opacity:0;transition:opacity .5s var(--g-ease);pointer-events:none}
+.glass-card:hover::after{opacity:1}
+@keyframes gGlassIn{from{opacity:0}}
+@keyframes gCardIn{from{opacity:0;transform:translateY(30px) scale(.94)}}
+:root{--g-ease:cubic-bezier(.22,1,.36,1);--g-spring:cubic-bezier(.34,1.56,.64,1)}
+.g-badge{width:62px;height:62px;margin:0 auto 16px;position:relative;animation:gBadgeIn .9s var(--g-spring) .15s both}
+@keyframes gBadgeIn{from{opacity:0;transform:scale(.4) rotate(-12deg)}}
+.g-badge-core{position:absolute;inset:0;display:grid;place-items:center;border-radius:50%;border:1px solid rgba(255,255,255,.6);background:linear-gradient(160deg,rgba(255,255,255,.32),rgba(255,255,255,.08));box-shadow:inset 0 1px 0 rgba(255,255,255,.6),0 16px 30px -14px rgba(0,0,0,.6);transition:transform .6s var(--g-spring),background .4s}
+.g-badge-core svg{width:28px;height:28px;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round}
+.g-badge-ring{position:absolute;inset:0;border:1px solid rgba(255,255,255,.45);border-radius:50%;animation:gSonar 2.8s var(--g-ease) 1s infinite}
+@keyframes gSonar{from{opacity:.7;transform:scale(1)}to{opacity:0;transform:scale(1.7)}}
+.g-otp.is-verifying .g-badge-core{transform:scale(.94)}
+.g-otp.is-verifying ~ .g-badge .g-badge-core,.g-otp.is-success ~ .g-badge .g-badge-core{background:linear-gradient(150deg,var(--green),var(--accent))}
+.g-otp-cells{--cell:min(70px,calc((100% - 30px)/4));--gap:10px;position:relative;display:flex;gap:var(--gap);width:max-content;margin:22px auto 6px;padding:12px 0}
+.g-otp-cell{width:var(--cell);height:calc(var(--cell) * 1.08);position:relative;animation:gCellIn .8s var(--g-spring) calc(.5s + var(--i) * 60ms) both}
+@keyframes gCellIn{from{opacity:0;transform:translateY(16px) scale(.75)}}
+.g-otp-cell input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:text;z-index:2}
+.g-otp-face{position:absolute;inset:0;border-radius:16px;display:grid;place-items:center;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.28);box-shadow:inset 0 1px 0 rgba(255,255,255,.25);transition:background .3s,border-color .3s,box-shadow .3s}
+.g-otp-cell:hover .g-otp-face{background:rgba(255,255,255,.16)}
+.g-otp-cell.is-filled .g-otp-face{background:rgba(255,255,255,.22);border-color:rgba(255,255,255,.5)}
+.g-otp-digit{font-size:calc(var(--cell) * .48);font-weight:700;font-variant-numeric:tabular-nums;animation:gDigitIn .5s var(--g-spring) both}
+@keyframes gDigitIn{from{opacity:0;filter:blur(4px);transform:translateY(10px) scale(.45)}}
+.g-otp-caret{position:absolute;width:2px;height:38%;background:var(--accent);border-radius:2px;animation:gBlink 1.05s ease-in-out infinite}
+@keyframes gBlink{0%,45%{opacity:1}55%,100%{opacity:0}}
+.g-otp-lens{position:absolute;top:12px;left:0;width:var(--cell);height:calc(var(--cell) * 1.08);border-radius:16px;pointer-events:none;z-index:3;background:linear-gradient(rgba(255,255,255,.2),rgba(255,255,255,.04));border:1.5px solid rgba(255,255,255,.85);box-shadow:0 0 0 4px rgba(255,255,255,.12),0 14px 30px -12px var(--accent),inset 0 1px 0 rgba(255,255,255,.6);opacity:0;transform:translateX(calc(var(--i) * (var(--cell) + var(--gap)))) scale(.86);transition:transform .5s var(--g-spring),opacity .25s}
+.g-otp-lens.is-on{opacity:1;transform:translateX(calc(var(--i) * (var(--cell) + var(--gap)))) scale(1)}
+.g-otp.is-verifying .g-otp-face{border-color:var(--accent);animation:gSpinFace .9s linear infinite}
+@keyframes gSpinFace{to{filter:hue-rotate(10deg)}}
+.g-otp.is-error .g-otp-cells{animation:gShake .5s var(--g-ease)}
+.g-otp.is-error .g-otp-face{background:rgba(255,90,80,.22);border-color:rgba(255,150,140,.7)}
+@keyframes gShake{15%{transform:translateX(-9px)}32%{transform:translateX(8px)}50%{transform:translateX(-6px)}68%{transform:translateX(4px)}84%{transform:translateX(-2px)}}
+.g-otp-merged{position:absolute;left:50%;top:50%;width:calc(var(--cell) * 1.15);height:calc(var(--cell) * 1.15);margin:calc(var(--cell) * -.575) 0 0 calc(var(--cell) * -.575);z-index:4;display:grid;place-items:center;border-radius:22px;background:linear-gradient(150deg,var(--green),var(--accent));border:1px solid rgba(255,255,255,.6);box-shadow:0 0 0 8px rgba(60,196,122,.16);animation:gMerge .7s var(--g-spring) both}
+.g-otp-merged svg{width:55%;height:55%;stroke:#fff;stroke-width:3px;stroke-dasharray:1;stroke-dashoffset:0}
+@keyframes gMerge{from{opacity:0;transform:scale(.35) rotate(-45deg)}}
+.g-resend{display:flex;justify-content:center;gap:6px;color:var(--muted);font-size:12.5px;margin-top:14px}
+.g-resend button{color:var(--accent);font-weight:700;background:none;border:none;cursor:pointer}
+.g-resend button:disabled{color:var(--muted);cursor:default}
+.g-sent{font-size:11.5px;color:var(--muted);margin:10px 0 0}
+.g-sent strong{color:var(--accent);font-weight:700}
+.g-hint{display:block;color:var(--muted);font-size:11px;margin-top:5px}
+.g-view{animation:gViewIn .6s var(--g-ease) both}
+@keyframes gViewIn{from{opacity:0;filter:blur(6px);transform:translateY(10px)}}
+.g-title{font-size:24px;font-weight:700;letter-spacing:-.02em;margin:0}
+.g-lede{color:var(--muted);font-size:13.5px;line-height:1.55;margin:8px auto 0;max-width:32ch}
+.g-btn{display:flex;justify-content:center;align-items:center;gap:8px;width:100%;height:48px;margin-top:18px;border:none;border-radius:14px;background:rgba(255,255,255,.9);color:#141414;font-weight:700;font-size:14.5px;cursor:pointer;transition:transform .25s var(--g-spring),box-shadow .3s;box-shadow:0 14px 28px -14px rgba(0,0,0,.7)}
+.g-btn:hover:not(:disabled){transform:translateY(-1px)}
+.g-btn:active:not(:disabled){transform:scale(.98)}
+.g-btn:disabled{opacity:.6;cursor:default}
+.g-btn.is-busy::before{content:"";width:15px;height:15px;border:2px solid rgba(0,0,0,.25);border-top-color:#141414;border-radius:50%;animation:gSpin .7s linear infinite}
+@keyframes gSpin{to{transform:rotate(360deg)}}
+.g-btn.g-host{background:var(--accent);color:#141414}
+.g-field{text-align:left;margin-top:12px}
+.g-field label{display:block;font-size:10.5px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+.g-field input{width:100%;height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:var(--text);padding:0 42px 0 13px;font-size:14px;outline:none;transition:border-color .2s,background .2s}
+.g-field input:focus{border-color:var(--accent);background:rgba(255,255,255,.13)}
+.g-hide{position:absolute;right:8px;margin-top:6px;background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer}
+.g-link{background:none;border:none;color:var(--accent);font-size:12.5px;font-weight:700;cursor:pointer;padding:4px}
+.g-guest{display:block;width:100%;margin-top:10px;padding:11px;border-radius:12px;border:1px dashed rgba(255,255,255,.28);background:rgba(255,255,255,.05);color:var(--text);font-size:13px;font-weight:600;cursor:pointer;transition:.2s}
+.g-guest:hover{border-color:var(--accent);background:rgba(255,255,255,.12)}
+.g-error{background:rgba(255,90,80,.16);border:1px solid rgba(255,150,140,.4);border-radius:10px;padding:8px 10px;font-size:12.5px;margin-top:12px;animation:gShake .4s var(--g-ease)}

@@ -14,7 +14,8 @@ now **self-contained in this one folder**, including the stream host.
 - **Next.js 14 (App Router) + React + TypeScript**
 - **AniList GraphQL** — catalog & metadata, no key needed (AniList is CORS-open)
 - **Kuhi API** (`kuhi/`, local Python/FastAPI, [aryaniiil/anime-api](https://github.com/aryaniiil/anime-api)) — video streams (animegg MP4s, 480p default, Reanime for subtitles)
-- No database — accounts + history live in localStorage
+- **Cloudflare KV** — server-side accounts, sessions and per-user sync data; localStorage is only an offline cache
+- **UI** — original glass-style navbar, OTP, download/share buttons and particle name effect, built in React/CSS (no copied vendor source)
 
 ## Run it (local, with playback)
 
@@ -66,6 +67,14 @@ Caveats:
   many cases — your call, same as the local setup.
 - Local default stays the same: double-click `start.bat`.
 
+## Interface
+
+- **Glassy navbar** (`components/GlassyNavbar.tsx`) — the AniVerse logo and page links live in one glass bar on every screen. Search is a pill that expands into the options' space; on phones/tablets the options collapse while searching and slide back when you close it with ESC or ✕. Guests get "Log in"; signed-in users get their profile avatar.
+- **Login page** (`app/page.tsx`) — branding, username/password with show–hide, glassy OTP field, "log in with a code instead", signup and guest access.
+- **Watch toolbar** (`app/watch/page.tsx`) — the original download icon opens a glass modal containing the glass download and share buttons; their accents follow the active theme.
+- **Name particles** (`components/NameParticles.tsx`) — profile effect with Sphere, Ring, Cube, Heart and username shapes.
+- **Themes** — Aurora, Ember, Pink, Midnight and Daylight; the navbar, buttons and accents follow the selection.
+
 ## Repository layout
 
 ```
@@ -75,9 +84,11 @@ D:\aniverse-next\
 │  ├─ api.py              ← entry:  uvicorn src.main:app
 │  └─ .venv\              ← ready-made venv, deps installed
 ├─ start.bat              ← one-click bootstrap (kuhi + dev server)
-├─ app\                   ← pages/routes
-├─ components\            ← header/bottom-nav/cards/Hero/etc.
-└─ lib\                   ← anilist.ts, api.ts, auth.ts, storage.ts/…
+├─ app\                   ← pages/routes (login, home, watch, profile, downloads, API)
+├─ components\            ← glassy navbar/OTP/download/share buttons, particles, cards
+├─ lib\server\            ← Cloudflare KV store, sessions, password hashing
+├─ tests\                 ← backend integration suite (pnpm test)
+└─ lib\                   ← anilist.ts, api.ts, auth.ts, sync.ts, storage.ts/…
 ```
 
 ## Cloudflare Worker (video proxy — optional but recommended)
@@ -95,10 +106,44 @@ proxy as a Cloudflare Worker (free, no bandwidth charge):
 Unset, the app falls back to `/api/stream` (works locally, uses Vercel bandwidth
 in prod).
 
+## Accounts, sync & email codes
+
+Server-only environment variables (Vercel → Settings → Environment Variables,
+Production + Preview; **never** prefix them with `NEXT_PUBLIC_`):
+
+| Variable | Purpose |
+| --- | --- |
+| `CF_API_TOKEN` | Cloudflare API token with KV read/write |
+| `CF_ACCOUNT_ID` | Cloudflare account id |
+| `CF_ACCOUNTS_KV` | KV namespace id for accounts/sessions/data |
+| `SMTP_USER` / `SMTP_PASS` | Gmail address + app password — sends login codes to any inbox (preferred) |
+| `SMTP_FROM` | Optional sender address (defaults to `SMTP_USER`) |
+| `RESEND_API_KEY` | Alternative: Resend API key (sandbox sender only mails the address verified in your Resend account) |
+| `RESEND_FROM` | Verified sender domain address for Resend (defaults to `onboarding@resend.dev`) |
+
+Accounts are optional-email by design: **sign up without an email → offline
+account, no OTP ever, plain password login**. With an email, signup and every
+login require a 4-digit code delivered to that inbox (Gmail SMTP preferred,
+Resend fallback), with an explicit "log in with a code instead" option.
+Existing localStorage accounts/sessions are migrated silently on boot and keep
+working. Guests get a unique local identity; their data is pushed into the
+account on signup/login, with a prompt before overwriting newer records.
+Account deletion lives in Profile and requires a password confirmation; it
+removes the account's keys from KV.
+
+Server is authoritative: localStorage is only a cache/queue. Each sync value is
+a separately versioned KV entry, so an eventually-consistent read of one key
+cannot overwrite another; conflicts ask before overwriting newer records.
+
+Checks: `pnpm lint`, `pnpm build`, `pnpm test`. Run the backend integration
+suite with `pnpm test` (set `API_BASE` to test a different deployment; set
+`TEST_EMAIL` to exercise email delivery).
+
 ## Known limitations
 
 - Kuhi is **local-only** by design — video only resolves on the machine running it. Deploying to Vercel/Netlify does NOT deploy animegg streams; a public deploy is catalog + "where to watch" only unless you point `ANIME_SOURCES_BASE` at a Kuhi instance reachable from the internet (a tunnel or your own host).
 - The vanilla `D:\aniverse\server.js` is the older static build; both read the same `:9797`.
-- Comments/account sync through localStorage only (no server DB).
+- Cloudflare KV value reads are eventually consistent (~1 minute), so cross-device
+  data can take a moment to appear. Conflict checks use strongly-consistent key metadata.
 - Subtitle conversion is `.ass` → `.vtt`; styled ASS markup is dropped (text only).
 - AniList has no dubs — the old "EN/JP" toggle from the stream page is gone.

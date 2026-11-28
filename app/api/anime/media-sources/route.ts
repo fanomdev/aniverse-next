@@ -38,21 +38,23 @@ export async function GET(request: Request) {
     )
   }
   try {
-    // animegg serves plain MP4s (playable everywhere); reanime only for its subtitle list
-    const [ag, ra] = await Promise.allSettled([
+    // animegg/reanime serve MP4 for most shows; some titles (e.g. movies like
+    // Maboroshi) are HLS-only — fall back to those instead of erroring out.
+    const [ag, ra, ak] = await Promise.allSettled([
       fetchJson(`${SOURCES_BASE}/anime/extract/${id}?e=${ep}&type=${audio}&provider=animegg`, 60000),
       fetchJson(`${SOURCES_BASE}/anime/extract/${id}?e=${ep}&type=${audio}&provider=reanime`, 60000),
+      fetchJson(`${SOURCES_BASE}/anime/extract/${id}?e=${ep}&type=${audio}&provider=anikoto`, 8000),
     ])
     const agR = ag.status === "fulfilled" ? ag.value : null
     const raR = ra.status === "fulfilled" ? ra.value : null
-    let streams = (agR?.streams || []).filter(
-      (s: any) => s && s.url && s.type === "mp4"
-    )
-    if (!streams.length) {
-      streams = (raR?.streams || []).filter(
-        (s: any) => s && s.url && s.type === "mp4"
-      )
-    }
+    const akR = ak.status === "fulfilled" ? ak.value : null
+    const mp4Of = (r: any) => (r?.streams || []).filter((s: any) => s && s.url && s.type === "mp4")
+    const hlsOf = (r: any) => (r?.streams || []).filter((s: any) => s && s.url && /\.m3u8(\?|$)/i.test(String(s.url)) && /^hls$/i.test(String(s.type)))
+
+    let streams = mp4Of(agR)
+    if (!streams.length) streams = mp4Of(raR)
+    const isHls = streams.length === 0
+    if (isHls) streams = hlsOf(akR).concat(hlsOf(agR)).concat(hlsOf(raR))
     if (!streams.length) {
       return Response.json(
         { error: "episode_not_found", message: "No playable stream found for this episode" },
@@ -65,7 +67,7 @@ export async function GET(request: Request) {
         resolution: qualityNum(s.quality),
         size: 0,
         vipLocked: false,
-        isM3U8: false,
+        isM3U8: isHls,
         referer: s.referer || SOURCES_BASE,
       }))
       // ascending: the player element #0 starts on the lowest quality
@@ -85,7 +87,7 @@ export async function GET(request: Request) {
         url: t.url || t.file,
       }))
       .filter((t: any) => !seen.has(t.url) && seen.add(t.url))
-    return Response.json({ data: { downloads, captions } })
+    return Response.json({ data: { downloads, captions } }, { headers: { "Access-Control-Allow-Origin": "*" } })
   } catch (err: any) {
     const msg = err?.message || "stream extraction failed"
     return Response.json({ error: "upstream_error", message: msg }, { status: 502 })

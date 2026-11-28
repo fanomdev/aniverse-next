@@ -1,5 +1,11 @@
 import type { Metadata, Viewport } from "next"
 import "./globals.css"
+import "./auth.css"
+import "./otp.css"
+import "./glassy-buttons.css"
+import "./name-particles.css"
+import "./glassy-navbar.css"
+import "glisse/styles.css"
 import AppShell from "@/components/AppShell"
 
 export const metadata: Metadata = {
@@ -22,7 +28,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" data-theme="aurora">
       <body>
         <AppShell>{children}</AppShell>
       </body>

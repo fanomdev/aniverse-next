@@ -41,7 +41,6 @@ export default function AnimeCard({ item, progress = null }: Props) {
         {item.cover ? (
           <img loading="lazy" decoding="async" src={item.cover} alt={item.title || "Anime poster"} onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0" }} />
         ) : null}
-        <div className="fallback">🎬</div>
         <div className="card-badges">{rating && <span className="chip rating">★ {rating}</span>}</div>
         <button className={`wl-toggle${onList ? " active" : ""}`} aria-label="Toggle watchlist" type="button" onClick={toggle}>
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>

@@ -1,6 +1,8 @@
 // lib/api.ts — typed client for the AniList GraphQL API + home/browse/detail
 // synthesis. Same behavior as the original vanilla js/api.js.
 const ANILIST_URL = "https://graphql.anilist.co"
+// absolute API origin baked at build time; "" = same-origin (website), set for the Android/iOS export
+export const API_ORIGIN = (process.env.NEXT_PUBLIC_API_ORIGIN || "").replace(/\/+$/, "")
 
 export class APIError extends Error {
   constructor(public code: string, message: string) {
@@ -167,6 +169,18 @@ export async function detailPayload(id: number) {
     isLicensed: !!m.isLicensed,
     dubs: [] as any[],
   }
+  // streamingEpisodes are NEWEST-FIRST, but their titles carry "Episode N" —
+  // pair them by number so any subset aligns correctly with the grid
+  const epByNumber = new Map<number, { title: string; thumbnail: string }>()
+  for (const s of m.streamingEpisodes || []) {
+    const mm = String(s?.title || "").match(/Episode\s+(\d+)/i)
+    const n = mm ? Number(mm[1]) : NaN
+    if (Number.isFinite(n) && n > 0 && !epByNumber.has(n)) {
+      epByNumber.set(n, { title: String(s?.title || ""), thumbnail: s?.thumbnail || "" })
+    }
+  }
+  const episodeList = [...epByNumber].map(([n, v]) => ({ n, ...v })).sort((a, b) => a.n - b.n)
+
   return {
     subject,
     resource: {
@@ -177,6 +191,7 @@ export async function detailPayload(id: number) {
       ],
     },
     stars,
+    episodeList,
   }
 }
 

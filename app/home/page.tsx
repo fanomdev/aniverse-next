@@ -57,7 +57,6 @@ function HomeInner() {
                 >
                   <div className="poster" style={e.cover ? { backgroundImage: `url('${e.cover}')` } : undefined}>
                     {e.cover ? <img loading="lazy" src={e.cover} alt={e.title} onError={(ev) => { (ev.currentTarget as HTMLImageElement).style.opacity = "0" }} /> : null}
-                    <div className="fallback">🎬</div>
                     <div className="card-play"><span>▶</span></div>
                   </div>
                   <div className="card-body">

@@ -55,7 +55,7 @@ export async function GET(request: Request) {
     const isAss = /\[Script Info\]/i.test(body) || body.includes("Dialogue:")
     const vtt = isAss ? assToVtt(body) : /WEBVTT/.test(body) ? body : srtToVtt(body)
     return new Response(vtt, {
-      headers: { "Content-Type": "text/vtt; charset=utf-8", "Cache-Control": "public, max-age=86400" },
+      headers: { "Content-Type": "text/vtt; charset=utf-8", "Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*" },
     })
   } catch {
     return new Response("subtitle fetch failed", { status: 502 })

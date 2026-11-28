@@ -1,13 +1,18 @@
 "use client"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import RequireAuth from "@/components/RequireAuth"
-import { API } from "@/lib/api"
-import { Continue, Watchlist, Likes } from "@/lib/storage"
+import { API, API_ORIGIN } from "@/lib/api"
+import { Continue, Watchlist, Likes, Watched } from "@/lib/storage"
+import { Downloader } from "@/lib/downloader"
+import GlassyDownloadButton from "@/components/GlassyDownloadButton"
+import GlassyShareButton from "@/components/GlassyShareButton"
 import { yearOf, genres, toast } from "@/lib/ui"
 import Hls from "hls.js"
 import { useSearchParams } from "next/navigation"
 
 export const dynamic = "force-dynamic"
+
+const STREAM_PROXY = "https://aniverse-stream.ayanbasit269.workers.dev"
 
 export default function WatchPage() {
   return (
@@ -45,13 +50,33 @@ function WatchInner() {
   const [sid, setSid] = useState(sidParam)
   const [overlayHtml, setOverlayHtml] = useState<string | null>(null)
   const [sources, setSources] = useState<any[]>([])
+  const [serverOpen, setServerOpen] = useState(false)
+  const serverLabel = (s: any, i: number) => {
+    try {
+      const host = new URL(s.url).hostname.replace(/^www\./, "")
+      const name = host.split(".")[0]
+      const tag = s.isM3U8 ? "HLS" : s.resolution ? `${s.resolution}p` : "MP4"
+      return `${name.charAt(0).toUpperCase()}${name.slice(1)} · ${tag}${sources.length > 1 ? ` #${i + 1}` : ""}`
+    } catch {
+      return `Server ${i + 1}`
+    }
+  }
   const [captions, setCaptions] = useState<any[]>([])
   const [quality, setQuality] = useState(-1)
+  const [qOpen, setQOpen] = useState(false)
+  const [epOpen, setEpOpen] = useState(false)
+  const qualityLabel = (i: number) => {
+    const s = sources[i]
+    if (!s) return "Auto"
+    const base = s.isM3U8 ? "Auto (HLS)" : s.resolution ? `${s.resolution}p` : "Auto"
+    return `${base}${s.size ? " · " + Math.round(s.size / 1048576) + " MB" : ""}`
+  }
   const [caption, setCaption] = useState(-1)
+  const [cOpen, setCOpen] = useState(false)
   const [loadingEpisodes, setLoadingEpisodes] = useState(true)
   const hlsRef = useRef<any>(null)
   const saveTimer = useRef<number | undefined>(undefined)
-  const triedDirect = useRef(false)
+  const playedUrlRef = useRef<string | null>(null)
 
   const curSeason = useMemo(() => seasons.find((s) => s.se === se), [seasons, se])
   const maxEp = curSeason?.maxEp || 0
@@ -85,9 +110,11 @@ function WatchInner() {
     if (!sid) return
     let alive = true
     setOverlayHtml(null)
+    setQuality(-1) // prevent the play effect from firing with the old episode's source
+    playedUrlRef.current = null // allow re-playing the same URL after an audio switch
     const seParam = movie ? 0 : se
     const epParam = movie ? 0 : ep
-    fetch(`/api/anime/media-sources?subjectId=${encodeURIComponent(sid)}&se=${seParam}&ep=${epParam}&audio=${audio}`)
+    fetch(`${API_ORIGIN}/api/anime/media-sources?subjectId=${encodeURIComponent(sid)}&se=${seParam}&ep=${epParam}&audio=${audio}`)
       .then(async (res) => {
         if (!res.ok) {
           const j = await res.json().catch(() => ({}))
@@ -107,7 +134,8 @@ function WatchInner() {
           : "<h3>No playable source</h3><p>This episode has no playable stream right now. Try another episode or check back later.</p>")
         else {
           const defIdx = dl.findIndex((s: any) => (s.resolution || 0) >= 480)
-          const pick = defIdx >= 0 ? defIdx : dl.length - 1
+          // HLS entries have no resolution number — prefer the first (fastest provider)
+          const pick = defIdx >= 0 ? defIdx : (dl[0]?.resolution == null ? 0 : dl.length - 1)
           setQuality(pick)
         }
       })
@@ -131,12 +159,11 @@ function WatchInner() {
     (idx: number) => {
       const s = sources[idx]
       if (!s) return
-      triedDirect.current = false
       const v = videoRef.current
       if (!v) return
       const startAt = (Continue.forTitle(dp).find((e) => e.se === se && e.ep === ep))?.time || 0
-      // proxy through Cloudflare Worker when set (no Vercel bandwidth); else /api/stream
-      const proxy = (process.env.NEXT_PUBLIC_STREAM_PROXY || "/api/stream").replace(/\/+$/, "")
+      // video bytes go through the Cloudflare Worker only (never Vercel)
+      const proxy = (process.env.NEXT_PUBLIC_STREAM_PROXY || STREAM_PROXY).replace(/\/+$/, "")
       const src = `${proxy}?video_url=${encodeURIComponent(s.url)}${s.referer ? `&ref=${encodeURIComponent(s.referer)}` : ""}`
       const m3u8 = !!s.isM3U8 || /\.m3u8(\?|$)/i.test(s.url)
       // reset any previous hls instance
@@ -150,7 +177,7 @@ function WatchInner() {
             hls.loadSource(src)
             hls.attachMedia(v)
             hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
-              if (data && data.fatal) setOverlayHtml('<h3>Stream failed</h3><p>The source host couldn’t be reached through the proxy. Check that ANIME_SOURCES_BASE points at a working Kuhi host (see README → Playback), then try another episode.</p>')
+              if (data && data.fatal) setOverlayHtml('<h3>Stream failed</h3><p>The video source couldn’t be reached right now. Try switching quality, SUB/DUB, or another episode — the source host may be down.</p>')
             })
             hlsRef.current = hls
           } catch {
@@ -178,7 +205,11 @@ function WatchInner() {
 
   // start playback when sources load (or quality changes)
   useEffect(() => {
-    if (quality >= 0 && sources[quality]) play(quality)
+    if (quality < 0 || !sources[quality]) return
+    const url = sources[quality].url
+    if (playedUrlRef.current === url) return
+    playedUrlRef.current = url
+    play(quality)
   }, [quality, sources, play])
 
   // subtitle selection → attach <track> and enable
@@ -193,7 +224,7 @@ function WatchInner() {
     track.kind = "subtitles"
     track.label = c.lanName || c.lan || "CC"
     track.srclang = (c.lan || "en").slice(0, 2)
-    track.src = `/api/caption?url=${encodeURIComponent(c.url)}`
+    track.src = `${API_ORIGIN}/api/caption?url=${encodeURIComponent(c.url)}`
     track.default = true
     track.addEventListener("load", () => {
       const t = v.textTracks[v.textTracks.length - 1]
@@ -232,31 +263,60 @@ function WatchInner() {
     window.location.href = `/watch?dp=${encodeURIComponent(dp)}&sid=${sid}&se=${nse}&ep=${nep}`
   }, [movie, maxEp, se, ep, seasons, dp, sid])
 
-  const handleEnded = useCallback(() => {
+  // corner box: shows when the credits roll (≈6 min left); never blurs or blocks the video
+  const [corner, setCorner] = useState<{ type: "preview" | "end" | "finished"; secs?: number } | null>(null)
+  const cornerDismissedRef = useRef<string | null>(null)
+  const dismissKey = () => `${dp}|${se}|${ep}|${audio}`
+  const cornerDismissed = () => cornerDismissedRef.current === dismissKey()
+  const hasNext = useCallback(() => {
     const n = maxEp
     const isLast = movie || (n && ep >= n)
-    if (isLast) {
-      const i = seasons.findIndex((s) => s.se === se)
-      if (i >= 0 && i < seasons.length - 1) {
-        toast("Next season starting…")
-        upsertContinue()
-        const ns = seasons[i + 1].se
-        setTimeout(() => { window.location.href = `/watch?dp=${encodeURIComponent(dp)}&sid=${sid}&se=${ns}&ep=1` }, 1400)
-        return
-      }
-      Continue.remove(dp, se, ep)
-      toast("You finished the season 🎉")
+    if (!isLast) return true
+    const i = seasons.findIndex((s) => s.se === se)
+    return i >= 0 && i < seasons.length - 1
+  }, [movie, maxEp, ep, seasons, se])
+
+  const handleEnded = useCallback(() => {
+    upsertContinue()
+    Watched.add(dp, se, ep)
+    const next = hasNext()
+    if (!next) Continue.remove(dp)
+    // at the very end: countdown in the corner box, then advance
+    setCorner(next ? { type: "end", secs: 3 } : { type: "finished" })
+  }, [upsertContinue, hasNext, dp, se, ep])
+
+  // countdown after the episode has ended
+  useEffect(() => {
+    if (!corner || corner.type !== "end") return
+    if (corner.secs! <= 0) {
+      setCorner(null)
+      stepEpisode(1)
       return
     }
-    upsertContinue()
-    toast("Next episode…")
-    setTimeout(() => stepEpisode(1), 1400)
-  }, [maxEp, ep, movie, seasons, se, dp, sid, upsertContinue, stepEpisode])
+    const t = setTimeout(() => setCorner({ type: "end", secs: (corner.secs ?? 3) - 1 }), 1000)
+    return () => clearTimeout(t)
+  }, [corner, stepEpisode])
 
   const bindTimeupdate = useCallback(() => {
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(upsertContinue, 4000)
-  }, [upsertContinue])
+    const v = videoRef.current
+    if (!v || !isFinite(v.duration) || v.duration <= 0) return
+    if (v.duration - v.currentTime <= 360 && v.duration - v.currentTime > 0 && !cornerDismissed() && hasNext()) {
+      setCorner((c) => (c?.type === "end" ? c : c ?? { type: "preview" }))
+    }
+    // 80% watched → count it as watched
+    if (v.currentTime / v.duration >= 0.8) Watched.add(dp, se, ep)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upsertContinue, hasNext])
+
+  // close the quality menu with Escape
+  useEffect(() => {
+    if (!qOpen && !epOpen && !cOpen && !serverOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setQOpen(false); setEpOpen(false); setCOpen(false); setServerOpen(false) } }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [qOpen, epOpen, cOpen, serverOpen])
 
   // keep the tab title in sync (the chat assistant reads it for context)
   useEffect(() => {
@@ -277,6 +337,68 @@ function WatchInner() {
       window.history.replaceState(null, "", `${window.location.pathname}?${q}`)
     } catch {}
   }
+  // best MP4 for download (through the proxy with dl=1 → attachment)
+  const dlSource = useMemo(
+    () => [...sources].reverse().find((s: any) => s && s.url && !s.isM3U8 && /\.mp4(\?|$)/i.test(s.url)),
+    [sources]
+  )
+  const dl = useMemo(() => {
+    if (!dlSource) return undefined
+    const safeTitle = (subject?.title || "anime").replace(/[^\w\- .]/g, "_").trim() || "anime"
+    const fileName = `${safeTitle} - ${movie ? "Movie" : `S${se}E${ep}`}.mp4`
+    const proxy = (process.env.NEXT_PUBLIC_STREAM_PROXY || STREAM_PROXY).replace(/\/+$/, "")
+    const ref = dlSource.referer ? `&ref=${encodeURIComponent(dlSource.referer)}` : ""
+    const href = `${proxy}?video_url=${encodeURIComponent(dlSource.url)}${ref}&dl=1&name=${encodeURIComponent(fileName)}`
+    return { href, fileName, resolution: dlSource.resolution as number | null }
+  }, [dlSource, subject?.title, se, ep, movie])
+  const dlHref = dl?.href
+
+  const dlBusy = useRef(false)
+  const dlAnchor = useRef<HTMLAnchorElement | null>(null)
+  const startDownload = useCallback(async (onProgress?: (pct: number) => void) => {
+    if (!dlSource || dlBusy.current) return
+    dlBusy.current = true
+    toast("Downloading episode…")
+    try {
+      await Downloader.download(
+        { detailPath: dp, subjectId: sid, title: subject?.title || "Anime", se, ep, audio, cover: subjectCover },
+        dl?.href || "",
+        (pct) => { onProgress?.(pct); if (pct % 20 === 0) toast(`Downloading… ${pct}%`) }
+      )
+      toast("Saved to Downloads ✅")
+    } catch (e: any) {
+      if (String(e?.message) !== "browser_used") toast(`Download failed: ${e?.message || "unknown error"}`)
+      throw e
+    } finally {
+      dlBusy.current = false
+    }
+  }, [dlSource, dl?.href, dp, sid, subject?.title, se, ep, audio, subjectCover])
+  // web: use the exact same download link the old modal used
+  const webDownload = useCallback(() => new Promise<void>((resolve) => {
+    dlAnchor.current?.click()
+    resolve()
+  }), [])
+  const shareEpisode = useCallback(async () => {
+    const url = window.location.href
+    const text = `${subject?.title || "Anime"} - ${movie ? "Movie" : `S${se}E${ep}`}`
+    if (navigator.share) {
+      try { await navigator.share({ title: text, url }); return } catch { /* share sheet cancelled/unavailable */ }
+    }
+    try {
+      await navigator.clipboard.writeText(url)
+    } catch {
+      const el = document.createElement("textarea")
+      el.value = url
+      el.style.position = "fixed"
+      el.style.opacity = "0"
+      document.body.appendChild(el)
+      el.select()
+      try { document.execCommand("copy") } catch { /* nothing else we can do */ }
+      el.remove()
+    }
+    toast("Link copied to clipboard")
+  }, [subject?.title, se, ep, movie])
+
   const toggleLike = () => {
     if (!subject) return
     const next = Likes.toggle({ detailPath: dp, title: subject.title })
@@ -298,37 +420,10 @@ function WatchInner() {
     toast(next ? "Added to your list" : "Removed from your list")
   }, [subject, sid, dp, subjectCover])
 
-  // best MP4 for download (through the proxy with dl=1 → attachment)
-  const dlSource = useMemo(
-    () => [...sources].reverse().find((s: any) => s && s.url && !s.isM3U8 && /\.mp4(\?|$)/i.test(s.url)),
-    [sources]
-  )
-  const dl = useMemo(() => {
-    if (!dlSource) return undefined
-    const safeTitle = (subject?.title || "anime").replace(/[^\w\- .]/g, "_").trim() || "anime"
-    const fileName = `${safeTitle} - ${movie ? "Movie" : `S${se}E${ep}`}.mp4`
-    const proxy = (process.env.NEXT_PUBLIC_STREAM_PROXY || "/api/stream").replace(/\/+$/, "")
-    const ref = dlSource.referer ? `&ref=${encodeURIComponent(dlSource.referer)}` : ""
-    const href = `${proxy}?video_url=${encodeURIComponent(dlSource.url)}${ref}&dl=1&name=${encodeURIComponent(fileName)}`
-    return { href, fileName, resolution: dlSource.resolution as number | null }
-  }, [dlSource, subject?.title, se, ep, movie])
-  const dlHref = dl?.href
-
   const onVideoError = useCallback(() => {
-    const v = videoRef.current
-    if (!v) return
-    if (triedDirect.current) {
-      setOverlayHtml('<h3>Stream failed</h3><p>Direct CDN playback is also blocked. Your network may be blocking the source host, or the source host is down.</p>')
-      return
-    }
-    const s = sources[quality]
-    if (!s) return
-    triedDirect.current = true
-    // last resort: hotlink the CDN directly (no referer injection)
-    v.src = s.url
-    v.load()
-    v.play().catch(() => {})
-  }, [sources, quality])
+    // hotlinking the CDN without our Referer proxy can't work — show a clear message
+    setOverlayHtml('<h3>Stream failed</h3><p>The video source couldn’t be reached right now. Try switching SUB/DUB, another quality, or another episode. If it keeps failing, the source host is down — not your connection.</p>')
+  }, [])
 
   const upNext: { se: number; ep: number }[] = useMemo(() => {
     if (movie || !maxEp) return []
@@ -358,19 +453,100 @@ function WatchInner() {
             {sources.length === 0 && !overlayHtml && (
               <div className="player-overlay" id="playerOverlay"><div className="spinner" /><p style={{ color: "var(--muted)", fontSize: 13 }}>Fetching sources…</p></div>
             )}
+            {corner && (
+              <div className="next-corner" role="status" aria-live="polite">
+                {corner.type === "finished" ? (
+                  <>
+                    <div className="nc-body">
+                      <div className="nc-label">🎉 All caught up</div>
+                      <div className="nc-text">You finished this season</div>
+                    </div>
+                    <a className="nc-skip" href={`/detail?dp=${encodeURIComponent(dp)}`}>Details ▸</a>
+                    <button className="nc-close" aria-label="Dismiss" onClick={() => setCorner(null)}>✕</button>
+                  </>
+                ) : corner.type === "preview" ? (
+                  <>
+                    <button className="nc-textbtn" onClick={() => { setCorner(null); stepEpisode(1) }} aria-label="Continue to next episode">
+                      Continue to next episode <span className="nc-arrow">▶</span>
+                    </button>
+                    <button className="nc-close" aria-label="Dismiss" onClick={() => { cornerDismissedRef.current = dismissKey(); setCorner(null) }}>✕</button>
+                  </>
+                ) : (
+                  <>
+                    <div className="nc-body">
+                      <div className="nc-label">Next up</div>
+                      <div className="nc-text">{`Next episode in ${corner.secs}s`}</div>
+                    </div>
+                    <button className="nc-skip" onClick={() => { setCorner(null); stepEpisode(1) }}>Play now</button>
+                    <button className="nc-close" aria-label="Dismiss" onClick={() => setCorner(null)}>✕</button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           <div className="player-controls">
-            <label style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }} htmlFor="qualitySel">Quality</label>
-            <select className="sel" id="qualitySel" aria-label="Video quality" value={quality} onChange={(e) => setQuality(Number(e.target.value))}>
-              {sources.map((s, i) => (
-                <option key={i} value={i}>{s.isM3U8 ? "Auto (HLS)" : s.resolution ? `${s.resolution}p` : "Auto"}{s.size ? " · " + Math.round(s.size / 1048576) + " MB" : ""}</option>
-              ))}
-            </select>
-            <label style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }} htmlFor="captionSel">Subtitles</label>
-            <select className="sel" id="captionSel" aria-label="Subtitles" value={caption} onChange={(e) => setCaption(Number(e.target.value))}>
-              <option value={-1}>Off</option>
-              {captions.map((c, i) => <option key={i} value={i}>{c.lanName || c.lan || "CC"}</option>)}
-            </select>
+            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }}>Server</span>
+            <div className="q-menu">
+              <button className="q-trigger srv-trigger" aria-haspopup="listbox" aria-expanded={serverOpen} onClick={() => setServerOpen((v) => !v)} disabled={!sources.length}>
+                {sources.length ? serverLabel(sources[quality] || sources[0], quality < 0 ? 0 : quality) : "No server"}
+                <span className={`q-caret${serverOpen ? " open" : ""}`}>▾</span>
+              </button>
+              {serverOpen && sources.length > 0 && (
+                <>
+                  <div className="q-backdrop" onClick={() => setServerOpen(false)} />
+                  <div className="q-pop srv-pop" role="listbox" aria-label="Stream server">
+                    {sources.map((s, i) => (
+                      <button key={i} className={`q-option${i === quality ? " active" : ""}`} role="option" aria-selected={i === quality} onClick={() => { setServerOpen(false); setQuality(i); play(i) }}>
+                        <span>{serverLabel(s, i)}</span>
+                        {i === quality ? <span className="q-check">✓</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }} id="qualityLabel">Quality</span>
+            <div className="q-menu">
+              <button className="q-trigger" aria-haspopup="listbox" aria-expanded={qOpen} onClick={() => setQOpen((v) => !v)}>
+                {qualityLabel(quality)}
+                <span className={`q-caret${qOpen ? " open" : ""}`}>▾</span>
+              </button>
+              {qOpen && (
+                <>
+                  <div className="q-backdrop" onClick={() => setQOpen(false)} />
+                  <div className="q-pop" role="listbox" aria-label="Video quality">
+                    {sources.map((s, i) => (
+                      <button key={i} className={`q-option${i === quality ? " active" : ""}`} role="option" aria-selected={i === quality} onClick={() => { setQuality(i); setQOpen(false) }}>
+                        <span>{qualityLabel(i)}</span>
+                        {i === quality ? <span className="q-check">✓</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }}>Subtitles</span>
+            <div className="q-menu">
+              <button className="q-trigger" aria-haspopup="listbox" aria-expanded={cOpen} onClick={() => setCOpen((v) => !v)}>
+                {caption === -1 ? "Off" : captions[caption]?.lanName || captions[caption]?.lan || "CC"}
+                <span className={`q-caret${cOpen ? " open" : ""}`}>▾</span>
+              </button>
+              {cOpen && (
+                <>
+                  <div className="q-backdrop" onClick={() => setCOpen(false)} />
+                  <div className="q-pop" role="listbox" aria-label="Subtitles">
+                    <button className={`q-option${caption === -1 ? " active" : ""}`} role="option" aria-selected={caption === -1} onClick={() => { setCaption(-1); setCOpen(false) }}>
+                      <span>Off</span>{caption === -1 ? <span className="q-check">✓</span> : null}
+                    </button>
+                    {captions.map((c, i) => (
+                      <button key={i} className={`q-option${caption === i ? " active" : ""}`} role="option" aria-selected={caption === i} onClick={() => { setCaption(i); setCOpen(false) }}>
+                        <span>{c.lanName || c.lan || "CC"}</span>{caption === i ? <span className="q-check">✓</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
             <div className="seg audio-seg" role="group" aria-label="Audio track">
               <button className={audio === "sub" ? "active" : undefined} aria-pressed={audio === "sub"} onClick={() => switchAudio("sub")}>SUB</button>
               <button className={audio === "dub" ? "active" : undefined} aria-pressed={audio === "dub"} onClick={() => switchAudio("dub")}>DUB</button>
@@ -380,6 +556,7 @@ function WatchInner() {
                 <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               </button>
             )}
+            {dl && <a ref={dlAnchor} href={dl.href} download={dl.fileName} style={{ display: "none" }} aria-hidden="true" tabIndex={-1} />}
             <button
               className={`icon-btn like-btn${liked ? " active" : ""}`}
               aria-label={liked ? "Unlike this anime" : "Like this anime"}
@@ -410,28 +587,38 @@ function WatchInner() {
                 {seasons.map((s) => <option key={s.se} value={s.se}>Season {s.se}</option>)}
               </select>
             )}
-            <select
-              id="epSel"
-              aria-label="Episode"
-              value={movie ? 0 : ep}
-              disabled={movie}
-              onChange={(e) => {
-                const nep = Number(e.target.value)
-                window.location.href = `/watch?dp=${encodeURIComponent(dp)}&sid=${sid}&se=${se}&ep=${nep}`
-              }}
-            >
-              {(movie ? [0] : Array.from({ length: Math.max(maxEp, 1) }, (_, i) => i + 1)).map((n) => (
-                <option key={n} value={movie ? 0 : n}>{movie ? "Movie" : `Episode ${n}`}</option>
-              ))}
-            </select>
-            <button className="icon-btn" id="nextEpBtn" aria-label="Next episode" onClick={() => stepEpisode(1)}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
+            <div className="ep-menu">
+              <button className="q-trigger ep-trigger" aria-haspopup="listbox" aria-expanded={epOpen} disabled={movie} onClick={() => setEpOpen((v) => !v)}>
+                {movie ? "Movie" : `Episode ${ep}`}
+                <span className={`q-caret${epOpen ? " open" : ""}`}>▾</span>
+              </button>
+              {epOpen && !movie && (
+                <>
+                  <div className="q-backdrop" onClick={() => setEpOpen(false)} />
+                  <div className="ep-pop" role="listbox" aria-label="Choose episode">
+                    {Array.from({ length: Math.max(maxEp, 1) }, (_, i) => i + 1).map((n) => (
+                      <button
+                        key={n}
+                        className={`ep-pop-item${n === ep ? " active" : ""}${Watched.has(dp, se, n) ? " watched" : ""}`}
+                        role="option"
+                        aria-selected={n === ep}
+                        onClick={() => { setEpOpen(false); window.location.href = `/watch?dp=${encodeURIComponent(dp)}&sid=${sid}&se=${se}&ep=${n}` }}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            <button className="next-ep-cta" id="nextEpBtn" aria-label="Next episode" onClick={() => stepEpisode(1)}><span className="lbl">Next Episode</span><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
             <span id="epInfo" style={{ color: "var(--muted)", fontSize: 12 }}>{resume > 10 && `Resume at ${fmtTime(resume)}`}</span>
           </div>
         </section>
         <aside className="watch-side">
           <h2 id="sideTitle">{subject?.title || "Loading…"}</h2>
           <div className="sub" id="sideMeta">{overview}</div>
-          <p id="sideDesc" style={{ fontSize: 13, lineHeight: 1.6, color: "#c6c8d4" }}>{subject?.description || ""}</p>
+          <p id="sideDesc" style={{ fontSize: 13, lineHeight: 1.6, color: "var(--text)" }}>{subject?.description || ""}</p>
           <div className="row-title" style={{ marginTop: 18 }}><h2 style={{ fontSize: 14 }}>Up Next</h2></div>
           <div id="upNextList" style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13, color: "var(--muted)" }}>
             {movie ? (
@@ -447,16 +634,18 @@ function WatchInner() {
         </aside>
       </div>
       {dlConfirm && dl && (
-        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Download episode" onClick={() => setDlConfirm(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-big">⬇️</div>
-            <h3>Download this episode?</h3>
-            <p className="modal-sub">{dl.fileName}{dl.resolution ? ` · ${dl.resolution}p` : ""}</p>
-            <p className="modal-fine">Direct from the source through your proxy. It may take a moment to start.</p>
-            <div className="modal-actions">
-              <button className="btn btn-ghost" onClick={() => setDlConfirm(false)}>Cancel</button>
-              <a className="btn btn-primary" href={dl.href} download={dl.fileName} onClick={() => setDlConfirm(false)}>Download</a>
-            </div>
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Download and share episode" onClick={() => setDlConfirm(false)}>
+          <div className="gb-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="gb-modal-close" aria-label="Close" onClick={() => setDlConfirm(false)}>✕</button>
+            <GlassyDownloadButton
+              title="Download episode"
+              subtitle={`${dl.fileName}${dl.resolution ? ` · ${dl.resolution}p` : ""}`}
+              badge="MP4"
+              doneTitle="Download started"
+              doneSubtitle="Check your browser downloads"
+              onDownload={Downloader.isNative() ? startDownload : () => { void webDownload() }}
+            />
+            <GlassyShareButton onShare={shareEpisode} />
           </div>
         </div>
       )}
